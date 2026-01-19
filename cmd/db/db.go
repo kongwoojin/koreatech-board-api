@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
-	"github.com/edgedb/edgedb-go"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"koreatech-board-api/cmd/utils"
 	"log"
@@ -12,7 +12,7 @@ import (
 
 var Pool = connect()
 
-func connect() *edgedb.Client {
+func connect() *pgxpool.Pool {
 	if !utils.IsRunningInContainer() {
 		err := godotenv.Load()
 		if err != nil {
@@ -20,20 +20,30 @@ func connect() *edgedb.Client {
 		}
 	}
 
-	edgeDBHost := os.Getenv("EDGEDB_HOST")
-	edgeDBPort := os.Getenv("EDGEDB_PORT")
-	edgeDBUser := os.Getenv("EDGEDB_USER")
-	edgeDBPasswd := os.Getenv("EDGEDB_PASSWD")
-	edgeDBName := os.Getenv("EDGEDB_DBNAME")
+	pgHost := os.Getenv("POSTGRES_HOST")
+	pgPort := os.Getenv("POSTGRES_PORT")
+	pgUser := os.Getenv("POSTGRES_USER")
+	pgPasswd := os.Getenv("POSTGRES_PASSWORD")
+	pgDBName := os.Getenv("POSTGRES_DB")
+
+	// Construct connection string
+	// Example: postgres://username:password@localhost:5432/database_name
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s", pgUser, pgPasswd, pgHost, pgPort, pgDBName)
 
 	ctx := context.Background()
-	opts := edgedb.Options{
-		Concurrency: 0,
-	}
-	pool, err := edgedb.CreateClientDSN(ctx, fmt.Sprintf("edgedb://%s:%s@%s:%s/%s", edgeDBUser, edgeDBPasswd, edgeDBHost, edgeDBPort, edgeDBName), opts)
-
+	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to parse database config: %v\n", err)
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		log.Fatalf("Unable to create connection pool: %v\n", err)
+	}
+
+	// Verify connection
+	if err := pool.Ping(ctx); err != nil {
+		log.Fatalf("Unable to ping database: %v\n", err)
 	}
 
 	return pool
