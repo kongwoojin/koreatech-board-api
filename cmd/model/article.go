@@ -9,5 +9,5 @@ type Article struct {
 	ArticleUrl string  `db:"article_url" json:"article_url"`
 	Content    string  `db:"content" json:"content"`
 	IsNotice   bool    `db:"is_notice" json:"is_notice"`
-	Files      []Files `json:"files"`
+	Files      []Files `json:"files" db:"-"`
 }
