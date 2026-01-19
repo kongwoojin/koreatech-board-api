@@ -2,6 +2,7 @@ package queries
 
 import (
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 	"koreatech-board-api/cmd/db"
 	"koreatech-board-api/cmd/enums"
@@ -42,36 +43,37 @@ func GetMinimumNotices(c echo.Context) error {
 	}
 
 	var results []model.Board = nil
-	var count []int64
 
 	if department != enums.UNKNOWN_DEPARTMENT && board != enums.UNKNOWN_BOARD {
-		listArgs := map[string]interface{}{"department": department.String(), "board": board.String()}
+		query := `
+			SELECT 
+				id::text, num, title, writer, to_char(write_date, 'YYYY-MM-DD') as write_date, 
+				read_count, (init_crawled_time = update_crawled_time) as is_new, is_notice
+			FROM notice
+			WHERE department = $1 AND board = $2
+			ORDER BY write_date DESC, num DESC
+			LIMIT 5
+		`
 
-		var listQuery = db.Pool.Query(c.Request().Context(),
-			`SELECT notice 
-		{ id, num, title, writer, write_date, read_count, is_new := .init_crawled_time = .update_crawled_time, is_notice }
-		FILTER .department=<Department><str>$department AND .board=<Board><str>$board order by .write_date DESC
-		THEN .num desc offset 0 limit 5`,
-			&results,
-			listArgs,
-		)
-
-		countArgs := map[string]interface{}{"department": department.String(), "board": board.String()}
-
-		var countQuery = db.Pool.Query(c.Request().Context(),
-			`SELECT count(notice filter .department=<Department><str>$department AND .board=<Board><str>$board)`,
-			&count,
-			countArgs,
-		)
-
-		if listQuery != nil || countQuery != nil {
+		rows, err := db.Pool.Query(c.Request().Context(), query, department.String(), board.String())
+		if err != nil {
 			status = http.StatusBadRequest
-			apiError = "Query error!"
+			apiError = "Query error: " + err.Error()
+		} else {
+			results, err = pgx.CollectRows(rows, pgx.RowToStructByName[model.Board])
+			if err != nil {
+				status = http.StatusBadRequest
+				apiError = "Scan error: " + err.Error()
+			}
 		}
 	}
 
-	for result := range results {
-		results[result].Num = 5 - int64(result)
+	if results != nil {
+		for i := range results {
+			results[i].Num = 5 - int64(i)
+		}
+	} else {
+		results = []model.Board{}
 	}
 
 	apiData := model.APIData{

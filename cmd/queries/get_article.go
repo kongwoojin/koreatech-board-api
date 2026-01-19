@@ -1,6 +1,7 @@
 package queries
 
 import (
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 	"koreatech-board-api/cmd/db"
 	"koreatech-board-api/cmd/model"
@@ -18,44 +19,77 @@ import (
 // @Failure		404
 // @Router			/article [get]
 func GetArticle(c echo.Context) error {
-	var results []model.Article
-
-	apiError := ""
+	uuid := c.QueryParam("uuid")
 	status := http.StatusOK
+	apiError := ""
 
-	var articleQuery = db.Pool.Query(c.Request().Context(),
-		`SELECT notice
-		{ id, num, title, writer, write_date, article_url, content, is_notice, files: {file_name, file_url} }
-		FILTER .id = <uuid><str>$0`,
-		&results,
-		c.QueryParam("uuid"),
-	)
+	var article model.Article
 
-	if articleQuery != nil {
-		status = http.StatusBadRequest
-		apiError = "Query error!"
+	query := `
+		SELECT 
+			id::text, num, title, writer, to_char(write_date, 'YYYY-MM-DD') as write_date, 
+			article_url, content, is_notice
+		FROM notice
+		WHERE id = $1::uuid
+	`
+
+	rows, err := db.Pool.Query(c.Request().Context(), query, uuid)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, model.ApiArticle{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Query error: " + err.Error(),
+		})
 	}
 
-	if len(results) == 0 {
-		article := model.ApiArticle{
-			StatusCode: status,
-			Error:      apiError,
-		}
-		return c.JSON(status, article)
-	} else {
-		article := model.ApiArticle{
-			StatusCode: status,
-			Error:      apiError,
-			Num:        results[0].Num,
-			Id:         results[0].Id,
-			Title:      results[0].Title,
-			Writer:     results[0].Writer,
-			WriteDate:  results[0].WriteDate,
-			ArticleUrl: results[0].ArticleUrl,
-			Content:    results[0].Content,
-			IsNotice:   results[0].IsNotice,
-			Files:      results[0].Files,
-		}
-		return c.JSON(status, article)
+	collected, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.Article])
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, model.ApiArticle{
+			StatusCode: http.StatusBadRequest,
+			Error:      "Scan error: " + err.Error(),
+		})
 	}
+
+	if len(collected) == 0 {
+		return c.JSON(http.StatusOK, model.ApiArticle{
+			StatusCode: http.StatusOK,
+			Error:      "",
+		})
+	}
+
+	article = collected[0]
+
+	fileQuery := `
+		SELECT f.file_name, f.file_url
+		FROM file f
+		JOIN notice_files nf ON f.id = nf.file_id
+		WHERE nf.notice_id = $1::uuid
+	`
+
+	fileRows, err := db.Pool.Query(c.Request().Context(), fileQuery, uuid)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, model.ApiArticle{
+			StatusCode: http.StatusBadRequest,
+			Error:      "File Query error: " + err.Error(),
+		})
+	}
+
+	files, err := pgx.CollectRows(fileRows, pgx.RowToStructByName[model.Files])
+	if err != nil {
+		// Log error but proceed
+	}
+	article.Files = files
+
+	return c.JSON(status, model.ApiArticle{
+		StatusCode: status,
+		Error:      apiError,
+		Num:        article.Num,
+		Id:         article.Id,
+		Title:      article.Title,
+		Writer:     article.Writer,
+		WriteDate:  article.WriteDate,
+		ArticleUrl: article.ArticleUrl,
+		Content:    article.Content,
+		IsNotice:   article.IsNotice,
+		Files:      article.Files,
+	})
 }
